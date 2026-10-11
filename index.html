@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GitHub FinOps — Hands-on Labs</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--fg:#e6edf3;--mute:#8b949e;--acc:#2f81f7;--ok:#3fb950;--bad:#f85149}
+*{box-sizing:border-box}body{margin:0;font:15px/1.6 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);display:grid;grid-template-columns:290px 1fr;min-height:100vh}
+nav{background:var(--panel);border-right:1px solid var(--line);padding:18px;position:sticky;top:0;height:100vh;overflow:auto}
+nav h1{font-size:17px;margin:0 0 4px}nav p{color:var(--mute);font-size:13px;margin:0 0 12px}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-bottom:14px}.bar i{display:block;height:100%;background:var(--ok);transform-origin:left;transform:scaleX(0);transition:transform .3s}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--fg);padding:8px 10px;border-radius:6px;cursor:pointer;font:inherit;font-size:14px}
+nav button:hover{background:#1f2630}nav button.on{background:#1f6feb33;outline:1px solid var(--acc)}nav button.done::before{content:"✓ ";color:var(--ok)}
+main{padding:32px 48px;max-width:960px}h2{margin:0 0 4px;font-size:28px;line-height:1.2}.meta{color:var(--mute);margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 20px;margin:16px 0}.card h3{margin:0 0 8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+pre{background:#010409;border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow:auto;position:relative;white-space:pre-wrap;word-break:break-word;font-size:13px}
+pre button{position:absolute;top:6px;right:6px;font-size:12px}
+button.b{background:#21262d;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit;font-size:13px}button.b:hover{border-color:var(--acc)}
+button.p{background:#238636;border-color:#2ea043}
+input{background:#010409;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 10px;font:inherit;width:260px}
+.ok{color:var(--ok)}.bad{color:var(--bad)}a{color:#58a6ff}ol li{margin:6px 0}code{background:#6e768133;padding:1px 5px;border-radius:4px;font-size:13px}
+.takeaway{background:#3fb95012;border-color:#3fb95055}.real{background:#d2992212;border-color:#d2992255}
+@media(max-width:800px){body{display:block}nav{position:static;height:auto}main{padding:20px}}
+</style>
+</head>
+<body>
+<nav>
+  <h1>GitHub FinOps Labs</h1>
+  <p>Hands-on: real <code>gh</code> + <code>jq</code> against a sample bill, then your own.</p>
+  <div class="bar"><i id="prog"></i></div>
+  <div id="toc"></div>
+  <p style="margin-top:16px"><button class="b" onclick="if(confirm('Reset progress?')){localStorage.removeItem(KEY);render()}">Reset progress</button></p>
+</nav>
+<main id="main"></main>
+
+<script id="core">
+// Pure logic: sample data, labs, answers. No DOM — tested by test.mjs.
+const Core = (() => {
+  const r2 = n => Math.round(n * 100) / 100;
+  function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const PRICE = { actions_linux: .006, actions_windows: .010, actions_macos: .062, actions_linux_16_core: .042, actions_storage: .00033602, codespaces_compute_d4: .36, codespaces_storage: .00009409, packages_storage: .00033602, packages_bandwidth: .5, copilot_for_business: 19 };
+  const PRODUCT = { actions: ['actions_linux', 'actions_windows', 'actions_macos', 'actions_linux_16_core', 'actions_storage'], codespaces: ['codespaces_compute_d4', 'codespaces_storage'], packages: ['packages_storage', 'packages_bandwidth'], copilot: ['copilot_for_business'] };
+  const productOf = sku => Object.keys(PRODUCT).find(p => PRODUCT[p].includes(sku));
+  const UNIT = { actions_linux: 'Minutes', actions_windows: 'Minutes', actions_macos: 'Minutes', actions_linux_16_core: 'Minutes', actions_storage: 'GigabyteHours', codespaces_compute_d4: 'Hours', codespaces_storage: 'GigabyteHours', packages_storage: 'GigabyteHours', packages_bandwidth: 'GigaBytes', copilot_for_business: 'UserMonths' };
+  const REPOS = [
+    ['acme-web', 'storefront', { linux: [300, 900], gb: 20, cs: [6, 16] }],
+    ['acme-web', 'checkout', { linux: [200, 600], windows: [100, 300], gb: 8 }],
+    ['acme-web', 'design-system', { linux: [100, 400], gb: 4 }],
+    ['acme-data', 'etl', { linux: [400, 1200], windows: [50, 150], gb: 30, cs: [4, 10] }],
+    ['acme-data', 'ml-models', { linux: [100, 300], l16: [60, 200], gb: 60 }],
+    ['acme-platform', 'infra', { linux: [500, 1500], gb: 12 }],
+    ['acme-platform', 'sdk-ios', { linux: [100, 300], macos: [250, 700], gb: 15 }],
+    ['acme-sandbox', 'experiments', { linux: [100, 500], gb: 40 }],
+  ];
+  const SEATS = { 'acme-web': 40, 'acme-data': 15, 'acme-platform': 25, 'acme-sandbox': 5 };
+
+  function build() {
+    const rand = rng(42), between = ([a, b]) => Math.round(a + rand() * (b - a));
+    const items = [];
+    const add = (day, sku, quantity, org, repo = '', included = false) => {
+      const grossAmount = r2(quantity * PRICE[sku]), discountAmount = included ? grossAmount : 0;
+      items.push({ date: `2026-09-${String(day).padStart(2, '0')}T00:00:00Z`, product: productOf(sku), sku, quantity, unitType: UNIT[sku], pricePerUnit: PRICE[sku], grossAmount, discountAmount, netAmount: r2(grossAmount - discountAmount), organizationName: org, repositoryName: repo });
+    };
+    for (let d = 1; d <= 30; d++) {
+      for (const [org, repo, c] of REPOS) {
+        add(d, 'actions_linux', between(c.linux), org, repo, d <= 2);
+        if (c.windows) add(d, 'actions_windows', between(c.windows), org, repo);
+        if (c.macos) add(d, 'actions_macos', between(c.macos), org, repo);
+        if (c.l16) add(d, 'actions_linux_16_core', between(c.l16), org, repo);
+        add(d, 'actions_storage', (c.gb + d * 0.5) * 24, org, repo);
+        if (c.cs) { add(d, 'codespaces_compute_d4', between(c.cs), org, repo); add(d, 'codespaces_storage', 50 * 24, org, repo); }
+      }
+      add(d, 'packages_storage', 100 * 24, 'acme-web');
+      add(d, 'packages_storage', 300 * 24, 'acme-platform');
+      add(d, 'packages_bandwidth', between([1, 5]), 'acme-platform');
+    }
+    add(17, 'actions_linux', 6000, 'acme-sandbox', 'experiments'); // runaway cron, lab 6
+    for (const [org, n] of Object.entries(SEATS)) add(30, 'copilot_for_business', n, org);
+
+    const spendBy = org => r2(items.filter(i => i.organizationName === org).reduce((s, i) => s + i.netAmount, 0));
+    const cc = [['Digital', 'acme-web', 0.9], ['Data', 'acme-data', 1.6], ['Platform', 'acme-platform', 1.1]];
+    const costCenters = {
+      _note: 'Shaped like GET /enterprises/{e}/settings/billing/cost-centers. monthlyBudgetUSD is a lab-only field (real budgets live under /settings/billing/budgets).',
+      costCenters: cc.map(([name, org, f], i) => ({ id: `cc-${i + 1}`, name, state: 'active', monthlyBudgetUSD: Math.round(spendBy(org) * f / 100) * 100, resources: [{ type: 'Org', name: org }] })),
+    };
+
+    const seats = [];
+    for (let i = 1; i <= 40; i++) {
+      let last;
+      if (i % 13 === 0) last = null; // never used
+      else if (i % 5 === 0 && i < 35) last = `2026-0${7 + (i % 2)}-${String(1 + (i % 18)).padStart(2, '0')}T10:00:00Z`; // stale (Jul / early Aug)
+      else last = `2026-09-${String(5 + Math.floor(rand() * 25)).padStart(2, '0')}T10:00:00Z`;
+      seats.push({ created_at: '2026-01-15T00:00:00Z', last_activity_at: last, last_activity_editor: last ? 'vscode' : null, plan_type: 'business', assignee: { login: `dev${String(i).padStart(2, '0')}`, type: 'User' } });
+    }
+    const ai = [], aiRand = rng(7);
+    let included = 300000; // ponytail: one org-wide pool; real pools can be per cost center
+    for (let d = 1; d <= 30; d++) for (const [model, lo, hi] of [['GPT-5', 3000, 6000], ['Claude Opus 4.8', 8000, 15000], ['Claude Haiku 4.5', 1000, 2000]]) {
+      const grossQuantity = Math.round(lo + aiRand() * (hi - lo)), discountQuantity = Math.min(included, grossQuantity), netQuantity = grossQuantity - discountQuantity;
+      included -= discountQuantity;
+      ai.push({ date: `2026-09-${String(d).padStart(2, '0')}T00:00:00Z`, product: 'Copilot', sku: 'copilot_ai_credit', model, unitType: 'credits', pricePerUnit: 0.01, grossQuantity, grossAmount: r2(grossQuantity * .01), discountQuantity, discountAmount: r2(discountQuantity * .01), netQuantity, netAmount: r2(netQuantity * .01) });
+    }
+    const C = (login, repo, lastPushAt, type = 'User') => ({ login, type, repo, lastPushAt });
+    const commits = [C('dev01', 'storefront', '2026-09-20'), C('dev02', 'storefront', '2026-09-10'), C('dev03', 'storefront', '2026-06-01'), C('dev04', 'storefront', '2026-09-01'),
+      C('dev01', 'checkout', '2026-09-15'), C('dev05', 'checkout', '2026-08-20'), C('dev06', 'checkout', '2026-09-25'),
+      C('dev02', 'etl', '2026-09-05'), C('dev07', 'etl', '2026-09-12'), C('dev08', 'etl', '2026-08-01'), C('dev09', 'etl', '2026-05-15'), C('dev10', 'etl', '2026-07-10'), C('dependabot[bot]', 'etl', '2026-09-29', 'Bot'),
+      C('dev04', 'infra', '2026-09-02'), C('dev11', 'infra', '2026-09-28'), C('dev07', 'infra', '2026-06-10')];
+    const ev = (day, action, actor, org, extra = {}) => ({ '@timestamp': Date.UTC(2026, 8, day), action, actor, org, ...extra });
+    const audit = [ev(3, 'org.update_actions_settings', 'alice', 'acme-web'), ev(5, 'org.add_billing_manager', 'bob', 'acme-data', { user: 'carol' }),
+      ev(9, 'org.set_actions_retention_limit', 'mallory', 'acme-sandbox', { retention_days: 400 }), ev(11, 'repo.create', 'dave', 'acme-web'),
+      ev(14, 'org.set_default_workflow_permissions', 'alice', 'acme-platform'), ev(16, 'org.add_billing_manager', 'mallory', 'acme-sandbox', { user: 'mallory-alt' }),
+      ev(21, 'org.set_actions_cache_storage_policy', 'bob', 'acme-data'), ev(25, 'team.add_member', 'erin', 'acme-web')];
+    return {
+      'audit-log.json': { _note: 'Synthetic sample shaped like GET /enterprises/{e}/audit-log. Approved billing admins: alice, bob.', events: audit },
+      'ai-usage.json': { _note: 'Synthetic sample shaped like GET /organizations/{org}/settings/billing/ai_credit/usage (plus a date per row). 300,000 included credits are consumed first.', usageItems: ai },
+      'security-committers.json': { _note: 'Synthetic: latest push per committer per repo with Secret Protection / Code Security enabled. "Today" is 2026-09-30.', commits },
+      'usage.json': { _note: 'Synthetic sample shaped like GET /organizations/{org}/settings/billing/usage. Compute/seat rates from GitHub Docs (Oct 2026), storage rates approximate — always use live pricePerUnit.', usageItems: items },
+      'cost-centers.json': costCenters,
+      'seats.json': { _note: 'Synthetic sample shaped like GET /orgs/acme-web/copilot/billing/seats. "Today" is 2026-09-30.', total_seats: seats.length, seats },
+    };
+  }
+
+  const sum = a => a.reduce((s, i) => s + i.netAmount, 0);
+  const D = 'https://docs.github.com/en';
+  const B = 'https://github.blog';
+  const labs = [
+    { id: 'setup', title: 'Set up your lab', mins: 5,
+      why: 'Every FinOps decision starts with data you can query. GitHub exposes the bill through the REST billing APIs; in this course you practise on a synthetic copy first, then point the same commands at your own org.',
+      steps: ['Create a folder and download the lab files using the buttons below (they are generated in your browser, fully offline).', 'Open a terminal in that folder and confirm the tools: <code>gh --version</code> and <code>jq --version</code>.', 'Peek at one usage line item — note <code>grossAmount</code>, <code>discountAmount</code>, <code>netAmount</code>, <code>sku</code>, <code>repositoryName</code>:', { cmd: "jq '.usageItems[0]' usage.json" }],
+      q: 'How many usage line items are in usage.json?', type: 'number', answer: d => d['usage.json'].usageItems.length,
+      solution: "jq '.usageItems | length' usage.json",
+      takeaway: 'The billing usage API returns line items, not a total. Treat it like a fact table: date × product × SKU × org × repo.',
+      real: 'gh api "/organizations/YOUR_ORG/settings/billing/usage?year=2026&month=9" > usage.json\n# enterprise-wide:\ngh api "/enterprises/YOUR_ENTERPRISE/settings/billing/usage?year=2026&month=9" > usage.json',
+      src: [['REST: Billing usage', `${D}/rest/billing/usage`], ['About billing on GitHub', `${D}/billing`]] },
+
+    { id: 'bill', title: 'Read the bill (gross vs net)', mins: 10,
+      why: 'Gross is what usage would cost at list price; discounts (included minutes, credits) reduce it to net — what you actually pay. Report net, but watch gross: it is what you will pay when free allowances run out.',
+      steps: ['Sum gross, discount and net in one pass:', { cmd: "jq '.usageItems | {gross: (map(.grossAmount)|add), discount: (map(.discountAmount)|add), net: (map(.netAmount)|add)}' usage.json" }, 'Which SKU got discounted, and on which days? Find out:', { cmd: "jq '[.usageItems[] | select(.discountAmount > 0) | {date: .date[:10], sku}] | unique' usage.json" }],
+      q: 'What is the total NET spend for September (USD)?', type: 'number', answer: d => sum(d['usage.json'].usageItems),
+      solution: "jq '[.usageItems[].netAmount] | add' usage.json",
+      takeaway: 'Included quotas are consumed first, early in the month. A team whose spend "jumps mid-month" usually just exhausted its allowance.',
+      real: 'gh api "/enterprises/YOUR_ENTERPRISE/settings/billing/usage/summary" | jq .',
+      src: [['Billing usage summary API (changelog)', `${B}/changelog/2025-11-03-manage-budgets-and-track-usage-with-new-billing-api-updates`], ['About billing on GitHub', `${D}/billing`]] },
+
+    { id: 'product', title: 'Where does the money go?', mins: 10,
+      why: 'FinOps Inform phase: break spend down by product before optimizing anything. Optimizing a product that is 3% of the bill is a waste of engineering time.',
+      steps: ['Group net spend by product, largest first:', { cmd: "jq '.usageItems | group_by(.product) | map({product: .[0].product, net: (map(.netAmount)|add)}) | sort_by(-.net)' usage.json" }, 'Now go one level deeper — by SKU:', { cmd: "jq '.usageItems | group_by(.sku) | map({sku: .[0].sku, net: (map(.netAmount)|add|.*100|round/100)}) | sort_by(-.net)' usage.json" }],
+      q: 'Which product has the highest net spend? (actions / codespaces / packages / copilot)', type: 'text',
+      answer: d => Object.entries(d['usage.json'].usageItems.reduce((m, i) => (m[i.product] = (m[i.product] || 0) + i.netAmount, m), {})).sort((a, b) => b[1] - a[1])[0][0],
+      solution: "jq -r '.usageItems | group_by(.product) | map({product: .[0].product, net: (map(.netAmount)|add)}) | max_by(.net) | .product' usage.json",
+      takeaway: 'Rank first, then optimize the top one or two lines. Most GitHub bills are dominated by Actions compute and Copilot seats.',
+      real: 'gh api "/organizations/YOUR_ORG/settings/billing/usage?year=2026&month=9" \\\n  | jq \'.usageItems | group_by(.product) | map({product: .[0].product, net: (map(.netAmount)|add)}) | sort_by(-.net)\'',
+      src: [['FinOps Framework', 'https://www.finops.org/framework/'], ['Actions Usage Metrics GA', `${B}/changelog/2024-07-25-actions-usage-metrics-is-generally-available`]] },
+
+    { id: 'alloc', title: 'Allocation & cost centers', mins: 15,
+      why: 'Unallocated spend has no owner, so nobody optimizes it. Cost centers map orgs, repos and users to a business owner. Course heuristic (not a GitHub rule): aim for >90% of spend allocated.',
+      steps: ['List which orgs each cost center owns:', { cmd: "jq '.costCenters[] | {name, orgs: [.resources[].name]}' cost-centers.json" }, 'List all orgs that appear on the bill and compare:', { cmd: "jq '[.usageItems[].organizationName] | unique' usage.json" }, 'Join the two files to compute the unallocated share (note <code>--slurpfile</code> and <code>IN</code>):', { cmd: "jq -n --slurpfile u usage.json --slurpfile c cost-centers.json '\n  ([$c[0].costCenters[].resources[].name]) as $mapped\n  | ($u[0].usageItems | map(.netAmount) | add) as $total\n  | ($u[0].usageItems | map(select((.organizationName | IN($mapped[])) | not)) | map(.netAmount) | add) as $unalloc\n  | {unallocated: $unalloc, pct: ($unalloc / $total * 100)}'" }, '<b>History matters:</b> this join uses <i>today’s</i> mapping. On GitHub, cost-center changes apply to <i>future</i> usage only; past usage stays where it was charged, and unassigned usage shows as <b>“Enterprise Only”</b>. A user’s direct assignment beats their enterprise-team assignment. For past months, report from the billing report’s recorded cost center, never by re-joining with the current mapping.'],
+      q: 'What % of net spend is NOT covered by any cost center? (e.g. 4.2)', type: 'number',
+      answer: d => { const m = d['cost-centers.json'].costCenters.flatMap(c => c.resources.map(r => r.name)), u = d['usage.json'].usageItems; return sum(u.filter(i => !m.includes(i.organizationName))) / sum(u) * 100; },
+      solution: "jq -n --slurpfile u usage.json --slurpfile c cost-centers.json '([$c[0].costCenters[].resources[].name]) as $m | ($u[0].usageItems | map(.netAmount) | add) as $t | ($u[0].usageItems | map(select((.organizationName | IN($m[])) | not)) | map(.netAmount) | add) / $t * 100'",
+      takeaway: 'Fix: add the sandbox org to a cost center (or give it a hard budget). Cost centers now support enterprise teams and per-user AI-credit budgets — use them so new resources inherit an owner.',
+      real: 'gh api /enterprises/YOUR_ENTERPRISE/settings/billing/cost-centers | jq \'.costCenters[] | {name, resources}\'',
+      src: [['Cost centers support enterprise teams', `${B}/changelog/2026-06-25-assign-enterprise-teams-to-cost-centers`], ['Docs: cost centers', `${D}/billing/tutorials/use-cost-centers`], ['Docs: cost center allocation rules', `${D}/billing/reference/cost-center-allocation`]] },
+
+    { id: 'forecast', title: 'Forecast before the month ends', mins: 10,
+      why: 'Budgets alert you after the fact; forecasts let you act mid-month. A simple run-rate forecast (MTD ÷ days elapsed × days in month) catches most surprises.',
+      steps: ['Pretend today is <b>2026-09-20</b>. Compute Actions month-to-date net spend (note <code>.date[:10]</code> — dates are ISO timestamps):', { cmd: "jq '[.usageItems[] | select(.product==\"actions\" and .date[:10] <= \"2026-09-20\") | .netAmount] | add' usage.json" }, 'Turn it into a 30-day run-rate forecast:', { cmd: "jq '[.usageItems[] | select(.product==\"actions\" and .date[:10] <= \"2026-09-20\") | .netAmount] | add / 20 * 30' usage.json" }, 'Compare with what actually happened (whole month). Why is the forecast slightly off? (Hint: lab 1 — included minutes in the first days.)'],
+      q: 'What is the run-rate forecast for September Actions spend (USD)?', type: 'number',
+      answer: d => sum(d['usage.json'].usageItems.filter(i => i.product === 'actions' && i.date.slice(0, 10) <= '2026-09-20')) / 20 * 30,
+      solution: "jq '[.usageItems[] | select(.product==\"actions\" and .date[:10] <= \"2026-09-20\") | .netAmount] | add / 20 * 30' usage.json",
+      takeaway: 'Set budgets per cost center with alerts (75/90/100% is a course heuristic — GitHub lets you choose), and run a forecast weekly. Decide up front whether a budget should block usage or only alert.',
+      real: 'gh api /enterprises/YOUR_ENTERPRISE/settings/billing/budgets | jq .',
+      src: [['Billing API updates for budgets & usage', `${B}/changelog/2025-11-03-manage-budgets-and-track-usage-with-new-billing-api-updates`], ['Docs: budgets and alerts', `${D}/billing/tutorials/set-up-budgets`]] },
+
+    { id: 'actions', title: 'Actions hotspot & runner what-if', mins: 20,
+      why: 'Runner choice dominates Actions cost: in this sample, macOS minutes cost 10× Linux. GitHub’s own guidance: pick hosted vs self-hosted and runner size deliberately, per workload.',
+      steps: ['Find the most expensive repo for Actions compute:', { cmd: "jq '.usageItems | map(select(.product==\"actions\" and .unitType==\"Minutes\")) | group_by(.repositoryName) | map({repo: .[0].repositoryName, net: (map(.netAmount)|add)}) | sort_by(-.net) | .[:3]' usage.json" }, 'Break that repo down by SKU — which runner is the culprit?', { cmd: "jq '.usageItems | map(select(.repositoryName==\"sdk-ios\" and .unitType==\"Minutes\")) | group_by(.sku) | map({sku: .[0].sku, minutes: (map(.quantity)|add), net: (map(.netAmount)|add)})' usage.json" }, 'What-if: half of those macOS jobs (lint, unit tests, codegen) don’t need macOS. Move 50% of the macOS minutes to Linux. Compute the monthly saving using the <code>pricePerUnit</code> values in the data.', '<b>Self-hosted TCO:</b> self-hosted runners use no GitHub-billed minutes, but they are not free. Compare hosted Linux spend with a self-hosted pool costing $600/month infra plus 8 engineer-hours at $100/h (patching, images, autoscaling, incidents):', { cmd: "jq '([.usageItems[] | select(.sku==\"actions_linux\") | .netAmount] | add) as $hosted | (600 + 8*100) as $self | {hosted: $hosted, selfHosted: $self, verdict: (if $hosted > $self then \"self-hosted may pay off\" else \"stay hosted\" end)}' usage.json" }, 'Before self-hosting, try cheaper hosted SKUs: Linux ARM (<code>actions_linux_arm</code>, $0.005/min) and 1-core Linux slim (<code>actions_linux_slim</code>, $0.002/min) for light jobs.'],
+      q: 'Monthly saving (USD) from moving 50% of sdk-ios macOS minutes to Linux?', type: 'number',
+      answer: d => { const u = d['usage.json'].usageItems, mins = u.filter(i => i.repositoryName === 'sdk-ios' && i.sku === 'actions_macos').reduce((s, i) => s + i.quantity, 0); return mins * 0.5 * (PRICE.actions_macos - PRICE.actions_linux); },
+      solution: "jq '([.usageItems[] | select(.sku==\"actions_linux\")][0].pricePerUnit) as $lin | ([.usageItems[] | select(.repositoryName==\"sdk-ios\" and .sku==\"actions_macos\")]) as $mac | ($mac | map(.quantity) | add) * 0.5 * ($mac[0].pricePerUnit - $lin)' usage.json",
+      takeaway: 'Other high-leverage Actions fixes: concurrency groups with cancel-in-progress, path filters, caching, timeout-minutes on every job, and right-sizing larger runners. Measure with Actions Usage Metrics before and after.',
+      real: '# per-repo Actions spend for your org\ngh api "/organizations/YOUR_ORG/settings/billing/usage?year=2026&month=9" \\\n  | jq \'.usageItems | map(select(.product=="actions")) | group_by(.repositoryName) | map({repo: .[0].repositoryName, net: (map(.netAmount)|add)}) | sort_by(-.net) | .[:10]\'',
+      src: [['Hosted vs self-hosted runners (GitHub Blog)', `${B}/enterprise-software/ci-cd/when-to-choose-github-hosted-runners-or-self-hosted-runners-with-github-actions/`], ['Actions Usage Metrics GA', `${B}/changelog/2024-07-25-actions-usage-metrics-is-generally-available`], ['Docs: Actions billing', `${D}/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions`], ['Docs: Actions runner pricing', `${D}/billing/reference/actions-runner-pricing`]] },
+
+    { id: 'anomaly', title: 'Catch runaway spend', mins: 15,
+      why: 'Budgets and run-rate forecasts assume steady usage. Real incidents are spikes: a cron set to every minute, recursive triggers, a matrix explosion, retry loops. Catch them in days, not at month end.',
+      steps: ['Compute each repo’s daily Actions spend and flag any day above 3× that repo’s daily average:', { cmd: "jq -r '.usageItems | map(select(.product==\"actions\")) | group_by(.repositoryName) | map(group_by(.date) | map({repo: .[0].repositoryName, date: .[0].date[:10], net: (map(.netAmount)|add)})) | map((map(.net)|add/length) as $avg | .[] | select(.net > 3 * $avg)) | .[] | \"\\(.repo) \\(.date) $\\(.net)\"' usage.json" }, 'Containment, in order: disable the workflow (<code>gh workflow disable</code>), cancel queued/running runs (<code>gh run cancel</code>), then find the trigger. Raising the budget is not a fix.'],
+      q: 'Which repo spiked, and on what date? (format: repo,YYYY-MM-DD)', type: 'list',
+      answer: d => { const m = {}; d['usage.json'].usageItems.filter(i => i.product === 'actions').forEach(i => { const r = m[i.repositoryName] ??= {}; r[i.date] = (r[i.date] || 0) + i.netAmount; }); return Object.entries(m).flatMap(([repo, days]) => { const v = Object.values(days), avg = v.reduce((a, b) => a + b) / v.length; return Object.entries(days).filter(([, n]) => n > 3 * avg).map(([dt]) => `${repo},${dt.slice(0, 10)}`); }).join(','); },
+      solution: "jq -r '.usageItems | map(select(.product==\"actions\")) | group_by(.repositoryName) | map(group_by(.date) | map({repo: .[0].repositoryName, date: .[0].date[:10], net: (map(.netAmount)|add)})) | map((map(.net)|add/length) as $avg | .[] | select(.net > 3 * $avg)) | .[] | \"\\(.repo),\\(.date)\"' usage.json",
+      takeaway: 'Run this daily, not monthly. Prevent the classics with <code>timeout-minutes</code>, <code>concurrency</code> + <code>cancel-in-progress</code>, sane cron schedules, and a hard budget on sandbox orgs.',
+      real: '# find the noisy workflow in the spiking repo\ngh run list -R YOUR_ORG/REPO --limit 100 --json workflowName,event,createdAt \\\n  | jq \'group_by(.workflowName) | map({wf: .[0].workflowName, runs: length}) | sort_by(-.runs)\'',
+      src: [['Actions Usage Metrics GA', `${B}/changelog/2024-07-25-actions-usage-metrics-is-generally-available`], ['Docs: budgets and alerts', `${D}/billing/tutorials/set-up-budgets`]] },
+
+    { id: 'storage', title: 'Storage: the silent cost', mins: 10,
+      why: 'Compute stops when jobs stop; storage keeps billing every hour. Artifacts, caches, packages and idle codespaces accumulate unless retention is set.',
+      steps: ['Find all storage-type lines (billed in GigabyteHours) and total them:', { cmd: "jq '.usageItems | map(select(.unitType==\"GigabyteHours\")) | group_by(.sku) | map({sku: .[0].sku, net: (map(.netAmount)|add)})' usage.json" }, 'Is Actions storage growing day over day? Check one repo:', { cmd: "jq -r '.usageItems[] | select(.sku==\"actions_storage\" and .repositoryName==\"ml-models\") | \"\\(.date[:10]) \\(.quantity)\"' usage.json | head -5" }, '<b>Transfer rules:</b> which of these are billed? (a) Actions pulls a private npm package with <code>GITHUB_TOKEN</code>; (b) a laptop pulls the same package with a PAT; (c) CI checks out a repo with a 500 MB Git LFS file; (d) someone pushes a 1-byte change to that LFS file.<details><summary>Answer</summary>(b) Packages transfer, (c) 500 MB of LFS bandwidth, and (d) another full 500 MB of LFS storage. Only (a) is free: <code>GITHUB_TOKEN</code> downloads in Actions don’t count. Public packages and Container registry are currently free. Fixes: cache LFS in CI (<code>actions/cache</code>), and avoid LFS for files that change often.</details>'],
+      q: 'Total net spend on storage (all GigabyteHours SKUs), USD?', type: 'number',
+      answer: d => sum(d['usage.json'].usageItems.filter(i => i.unitType === 'GigabyteHours')),
+      solution: "jq '[.usageItems[] | select(.unitType==\"GigabyteHours\") | .netAmount] | add' usage.json",
+      takeaway: 'Set artifact/log retention per org & repo, delete stale package versions, and set Codespaces idle timeout + retention period. GitHub cut its own Codespaces costs by right-sizing — see the blog post.',
+      real: '# biggest Actions caches in a repo\ngh cache list -R YOUR_ORG/YOUR_REPO --sort size_in_bytes --limit 10',
+      src: [['How GitHub reduces costs with upgraded Codespaces', `${B}/engineering/architecture-optimization/how-github-reduces-costs-with-upgraded-codespaces/`], ['Actions retention now covers checks, runs & statuses', `${B}/changelog/2026-08-27-actions-retention-will-cover-checks-workflow-runs-and-statuses`], ['Docs: Codespaces billing', `${D}/billing/managing-billing-for-your-products/managing-billing-for-github-codespaces/about-billing-for-github-codespaces`], ['Docs: Packages billing', `${D}/billing/concepts/product-billing/github-packages`], ['Docs: Git LFS billing', `${D}/billing/concepts/product-billing/git-lfs`]] },
+
+    { id: 'copilot', title: 'Copilot seat hygiene', mins: 15,
+      why: 'Copilot is billed per assigned seat, used or not. Reclaiming idle seats is the fastest Copilot saving; measuring value per active user is the long-term one.',
+      steps: ['seats.json is acme-web’s seat list. "Today" is 2026-09-30. Count seats with no activity in 30 days (including never-used, where <code>last_activity_at</code> is null):', { cmd: "jq --arg cutoff \"2026-08-31T00:00:00Z\" '[.seats[] | select(.last_activity_at == null or .last_activity_at < $cutoff)] | length' seats.json" }, 'List them for the owner to review:', { cmd: "jq -r --arg cutoff \"2026-08-31T00:00:00Z\" '.seats[] | select(.last_activity_at == null or .last_activity_at < $cutoff) | \"\\(.assignee.login)\\t\\(.last_activity_at // \"never\")\"' seats.json" }, 'Find the seat price from usage.json (<code>sku == \"copilot_for_business\"</code>) and compute the monthly saving.', '<b>Billing caveats:</b> removed seats keep billing until the end of the current cycle, so the saving starts <i>next</i> cycle. A user with seats in several orgs of one enterprise is billed once. Treat “inactive” as a review candidate, not proof: confirm with the user before unassigning.'],
+      q: 'Recurring monthly saving (USD), starting next billing cycle, if acme-web removes all 30-day-inactive seats?', type: 'number',
+      answer: d => d['seats.json'].seats.filter(s => !s.last_activity_at || s.last_activity_at < '2026-08-31T00:00:00Z').length * PRICE.copilot_for_business,
+      solution: "jq -n --slurpfile s seats.json --slurpfile u usage.json '([$u[0].usageItems[] | select(.sku==\"copilot_for_business\")][0].pricePerUnit) * ([$s[0].seats[] | select(.last_activity_at == null or .last_activity_at < \"2026-08-31T00:00:00Z\")] | length)'",
+      takeaway: 'Don’t auto-remove: notify, wait a grace period, then unassign. Pair seat hygiene with value metrics (adoption, acceptance, PR throughput) and manage AI credits with per-user budgets and cost-center credit pools.',
+      real: 'gh api --paginate /orgs/YOUR_ORG/copilot/billing/seats --jq \'.seats[]\' | jq -s \'{seats: .}\' > seats.json',
+      src: [['How we make AI coding more cost-efficient (GitHub Blog)', `${B}/ai-and-ml/github-copilot/how-we-make-ai-coding-more-cost-efficient-without-sacrificing-task-quality/`], ['Copilot impact research with Accenture', `${B}/news-insights/research/research-quantifying-github-copilots-impact-in-the-enterprise-with-accenture/`], ['REST: Copilot user management', `${D}/rest/copilot/copilot-user-management`], ['Docs: Copilot seats & billing cycles', `${D}/copilot/concepts/billing-and-usage/organizations-and-enterprises/seats-and-billing-cycles`]] },
+
+    { id: 'ai', title: 'Copilot AI credits by model', mins: 15,
+      why: 'Seats are fixed cost; AI credits are variable and the fastest-growing Copilot line. Once included credits run out, every request is paid — and model choice drives the bill far more than headcount.',
+      steps: ['When did the included credits run out?', { cmd: "jq -r '[.usageItems[] | select(.netQuantity > 0)][0].date[:10]' ai-usage.json" }, 'Paid (net) spend by model:', { cmd: "jq '.usageItems | group_by(.model) | map({model: .[0].model, credits: (map(.grossQuantity)|add), paid: (map(.netAmount)|add)}) | sort_by(-.paid)' ai-usage.json" }],
+      q: 'Which model drives the most paid AI-credit spend?', type: 'text',
+      answer: d => Object.entries(d['ai-usage.json'].usageItems.reduce((m, i) => (m[i.model] = (m[i.model] || 0) + i.netAmount, m), {})).sort((a, b) => b[1] - a[1])[0][0],
+      solution: "jq -r '.usageItems | group_by(.model) | map({model: .[0].model, paid: (map(.netAmount)|add)}) | max_by(.paid) | .model' ai-usage.json",
+      takeaway: 'Set per-user AI-credit budgets and cost-center credit pools, default teams to cost-efficient models, and reserve premium models for tasks that need them. Track paid credits per active user as the unit metric.',
+      real: 'gh api -H "X-GitHub-Api-Version: 2026-03-10" "/organizations/YOUR_ORG/settings/billing/ai_credit/usage?year=2026&month=9" | jq \'.usageItems | group_by(.model) | map({model: .[0].model, paid: (map(.netAmount)|add)})\'',
+      src: [['How we make AI coding more cost-efficient (GitHub Blog)', `${B}/ai-and-ml/github-copilot/how-we-make-ai-coding-more-cost-efficient-without-sacrificing-task-quality/`], ['REST: AI credit usage', `${D}/rest/billing/usage#get-billing-ai-credit-usage-report-for-an-organization`], ['Docs: SKU names', `${D}/billing/reference/product-and-sku-names`]] },
+
+    { id: 'ghas', title: 'Advanced Security licences', mins: 15,
+      why: 'Secret Protection and Code Security are billed per unique active committer (pushed in the last 90 days) across enabled repos — not per repo, not per seat. Disabling a repo only frees committers who are active nowhere else.',
+      steps: ['Count billable committers (active since 2026-07-02, GitHub App bots ignored):', { cmd: "jq --arg c 2026-07-02 '[.commits[] | select(.type==\"User\" and .lastPushAt >= $c) | .login] | unique | length' security-committers.json" }, 'What-if: disable Code Security on <code>etl</code>. Which licences are freed? Only committers active on etl and on no other enabled repo:', { cmd: "jq --arg c 2026-07-02 '[.commits[] | select(.type==\"User\" and .lastPushAt >= $c)] as $a | ([$a[] | select(.repo==\"etl\") | .login] - [$a[] | select(.repo!=\"etl\") | .login]) | unique' security-committers.json" }, 'Note dev07: last push to infra is stale, so etl is their only active repo.'],
+      q: 'How many licences would disabling etl free?', type: 'number',
+      answer: d => { const a = d['security-committers.json'].commits.filter(c => c.type === 'User' && c.lastPushAt >= '2026-07-02'), other = new Set(a.filter(c => c.repo !== 'etl').map(c => c.login)); return new Set(a.filter(c => c.repo === 'etl' && !other.has(c.login)).map(c => c.login)).size; },
+      solution: "jq --arg c 2026-07-02 '[.commits[] | select(.type==\"User\" and .lastPushAt >= $c)] as $a | ([$a[] | select(.repo==\"etl\") | .login] - [$a[] | select(.repo!=\"etl\") | .login]) | unique | length' security-committers.json",
+      takeaway: 'On metered billing, freed licences lower next month’s bill. On volume/subscription billing you already paid — freed licences are headroom, not savings. Know which you are on before cutting coverage.',
+      real: '# Org → Settings → Advanced Security → Global settings shows active and unique committers per repo',
+      src: [['Docs: Advanced Security billing', `${D}/billing/concepts/product-billing/github-advanced-security`]] },
+
+    { id: 'guardrails', title: 'Admin guardrails & audit', mins: 20,
+      why: 'Cost controls only hold if few people can change them and every change is visible. GitHub’s enterprise guidance: least privilege via teams and custom roles, Actions policies set centrally, and audit logs reviewed and retained.',
+      steps: ['Approved billing admins are <b>alice</b> and <b>bob</b>. List every cost-relevant change (billing managers, Actions retention/cache/permissions):', { cmd: "jq -r '.events[] | select(.action | test(\"billing_manager|actions_\")) | \"\\(.[\"@timestamp\"]/1000|todate[:10]) \\(.actor) \\(.action) \\(.org)\"' audit-log.json" }, 'Flag changes made by anyone outside the approved list:', { cmd: "jq -r '[.events[] | select((.action | test(\"billing_manager|actions_\")) and (.actor | IN(\"alice\",\"bob\") | not)) | .actor] | unique[]' audit-log.json" }, 'Fix in your org: remove unexpected billing managers, set Actions to allow only GitHub/verified/selected actions, default <code>GITHUB_TOKEN</code> to read-only, set enterprise retention limits, and stream the audit log for retention beyond GitHub’s window.'],
+      q: 'Which actor made unapproved cost-relevant changes?', type: 'text',
+      answer: d => [...new Set(d['audit-log.json'].events.filter(e => /billing_manager|actions_/.test(e.action) && !['alice', 'bob'].includes(e.actor)).map(e => e.actor))].join(','),
+      solution: "jq -r '[.events[] | select((.action | test(\"billing_manager|actions_\")) and (.actor | IN(\"alice\",\"bob\") | not)) | .actor] | unique | join(\",\")' audit-log.json",
+      takeaway: 'Keep owners and billing managers few; grant access through teams (IdP-synced where possible) and custom roles. Enforce Actions, retention and PAT policies at enterprise level so orgs can’t loosen them, and alert on billing-manager and policy changes.',
+      real: 'gh api "/enterprises/YOUR_ENTERPRISE/audit-log?phrase=action:org.add_billing_manager" --jq \'.[] | {actor, org, user}\'\ngh api /orgs/YOUR_ORG/actions/permissions             # allowed actions\ngh api /orgs/YOUR_ORG/actions/permissions/workflow    # default GITHUB_TOKEN permissions\ngh api /orgs/YOUR_ORG/actions/permissions/artifact-and-log-retention',
+      src: [['Best practices for enterprises', `${D}/enterprise-cloud@latest/admin/overview/best-practices-for-enterprises`], ['Introducing Actions to your enterprise (governance)', `${D}/enterprise-cloud@latest/admin/managing-github-actions-for-your-enterprise/getting-started-with-github-actions-for-your-enterprise/introducing-github-actions-to-your-enterprise`], ['Audit log events for your enterprise', `${D}/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/audit-log-events-for-your-enterprise`], ['REST: Actions permissions', `${D}/rest/actions/permissions`]] },
+
+    { id: 'alert', title: 'Automate: budget alert script', mins: 20,
+      why: 'FinOps Operate phase: make the checks you just did run themselves. A weekly job that flags cost centers above 80% of budget turns this course into a habit.',
+      steps: ['Write <code>budget-check.sh</code>:', { cmd: "#!/usr/bin/env bash\nset -euo pipefail\njq -rn --slurpfile u usage.json --slurpfile c cost-centers.json '\n  $c[0].costCenters[] as $cc\n  | ([$cc.resources[].name]) as $orgs\n  | ([$u[0].usageItems[] | select(.organizationName | IN($orgs[])) | .netAmount] | add) as $spend\n  | select($spend >= 0.8 * $cc.monthlyBudgetUSD)\n  | \"⚠️  \\($cc.name): $\\($spend|floor) of $\\($cc.monthlyBudgetUSD) (\\($spend*100/$cc.monthlyBudgetUSD|floor)%)\"'" }, 'Run it: <code>bash budget-check.sh</code>', 'Stretch: schedule it in a GitHub Actions workflow (<code>on: schedule</code>) that fetches live usage with a GitHub App token and posts the output to an issue or Slack.'],
+      q: 'Which cost centers are at ≥80% of budget? (comma-separated names)', type: 'list',
+      answer: d => d['cost-centers.json'].costCenters.filter(c => sum(d['usage.json'].usageItems.filter(i => c.resources.some(r => r.name === i.organizationName))) >= 0.8 * c.monthlyBudgetUSD).map(c => c.name).join(','),
+      solution: "jq -rn --slurpfile u usage.json --slurpfile c cost-centers.json '$c[0].costCenters[] as $cc | ([$cc.resources[].name]) as $orgs | ([$u[0].usageItems[] | select(.organizationName | IN($orgs[])) | .netAmount] | add) as $spend | select($spend >= 0.8 * $cc.monthlyBudgetUSD) | $cc.name'",
+      takeaway: 'Use a GitHub App (not a long-lived PAT) for billing automation, keep the report in one place, and review it on a fixed cadence: weekly for engineering leads, monthly for finance.',
+      real: '# GitHub Apps can now read enterprise billing data:\n# https://github.blog/changelog/2026-08-26-github-apps-can-now-access-enterprise-billing-data/',
+      src: [['GitHub Apps can access enterprise billing data', `${B}/changelog/2026-08-26-github-apps-can-now-access-enterprise-billing-data/`], ['FinOps Framework: phases', 'https://www.finops.org/framework/phases/']] },
+
+    { id: 'capstone', title: 'Capstone: your real org', mins: 60,
+      why: 'Repeat the labs on your own data. Your deliverable is a one-page FinOps snapshot you can hand to finance and engineering.',
+      steps: ['Pull last month’s usage for your org/enterprise with the "Run it for real" command from lab 0.', 'Rank spend by product and by repo (Where does the money go?, Actions hotspot). Record the top 3 lines.', 'Measure allocation % (Allocation). Owner + cost center for anything unallocated.', 'Forecast this month (Forecast) and set/verify budgets at 75/90/100%.', 'Pull AI-credit usage and Advanced Security committers; note the top model and licence count.', '<b>Reconcile to the invoice:</b> list every charge and classify it as metered usage, licence/seat (Enterprise, Copilot, Advanced Security), or prepaid/volume; note whether it is paid via GitHub or Azure. The usage API total will not equal the invoice — explain each variance.', 'Pick ONE optimization with a computed saving (runner mix, retention, seats, model mix, or licences).', 'Schedule the budget-check script and the runaway-spend check.', 'Run the guardrails audit: approved billing admins, Actions policies, retention limits, audit-log streaming.', 'Write the snapshot: total net, top 3 drivers, allocation %, forecast vs budget, one optimization + owner + date.'],
+      q: 'Type "done" when your one-page snapshot is written.', type: 'text', answer: () => 'done', solution: 'echo done',
+      takeaway: 'FinOps is a loop, not a project: Inform → Optimize → Operate, every month.',
+      real: '', src: [['FinOps Framework', 'https://www.finops.org/framework/'], ['GitHub billing docs', `${D}/billing`]] },
+  ];
+
+  labs.forEach((l, i) => l.title = `${i} · ${l.title}`);
+  const norm = s => String(s).toLowerCase().replace(/[$%\s]/g, '').split(',').filter(Boolean).sort().join(',');
+  function check(lab, input, data) {
+    const want = lab.answer(data);
+    if (lab.type === 'number') { const n = parseFloat(String(input).replace(/[$,%\s]/g, '')); return Number.isFinite(n) && Math.abs(n - want) <= Math.max(0.05, Math.abs(want) * 0.005); }
+    return norm(input) === norm(want);
+  }
+  return { build, labs, check };
+})();
+if (typeof module !== 'undefined') module.exports = Core;
+</script>
+
+<script>
+const KEY = 'gh-finops-labs-v1';
+const DATA = Core.build();
+const state = () => JSON.parse(localStorage.getItem(KEY) || '{"done":{},"cur":"setup"}');
+const save = s => localStorage.setItem(KEY, JSON.stringify(s));
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const pre = cmd => `<pre><button class="b" onclick="copy(this)">Copy</button><code>${esc(cmd)}</code></pre>`;
+function copy(btn) { navigator.clipboard.writeText(btn.nextElementSibling.textContent); btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1200); }
+function download(name) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([JSON.stringify(DATA[name], null, 2)], { type: 'application/json' })), download: name });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+function go(id) { const s = state(); s.cur = id; save(s); render(); scrollTo(0, 0); }
+function submit(id) {
+  const lab = Core.labs.find(l => l.id === id), v = document.getElementById('ans').value, out = document.getElementById('res');
+  if (Core.check(lab, v, DATA)) { const s = state(); s.done[id] = true; save(s); render(); document.getElementById('res').innerHTML = '<span class="ok">✓ Correct — lab complete.</span>'; }
+  else out.innerHTML = '<span class="bad">✗ Not quite. Re-check your filter, or reveal the solution.</span>';
+}
+function render() {
+  const s = state(), labs = Core.labs, i = Math.max(0, labs.findIndex(l => l.id === s.cur)), lab = labs[i];
+  const n = Object.keys(s.done).length;
+  document.getElementById('prog').style.transform = `scaleX(${n / labs.length})`;
+  document.getElementById('toc').innerHTML = labs.map(l => `<button class="${l.id === lab.id ? 'on' : ''} ${s.done[l.id] ? 'done' : ''}" onclick="go('${l.id}')">${l.title}</button>`).join('') + `<p style="margin-top:10px">${n}/${labs.length} complete</p>`;
+  const steps = lab.steps.map(st => typeof st === 'string' ? `<li>${st}</li>` : pre(st.cmd)).join('');
+  document.getElementById('main').innerHTML = `
+    <h2>${lab.title}</h2><div class="meta">~${lab.mins} min ${s.done[lab.id] ? '· <span class="ok">completed</span>' : ''}</div>
+    <div class="card"><h3>Why it matters</h3>${lab.why}</div>
+    ${lab.id === 'setup' ? `<div class="card"><h3>Lab files</h3>${Object.keys(DATA).map(f => `<button class="b p" onclick="download('${f}')">⬇ ${f}</button> `).join('')}<p class="meta" style="margin:8px 0 0">Synthetic data for a fictional enterprise “acme”, September 2026. Prices are illustrative — always check GitHub Docs.</p></div>` : ''}
+    <div class="card"><h3>Do it</h3><ol>${steps}</ol></div>
+    <div class="card"><h3>Check your answer</h3><p>${lab.q}</p>
+      <input id="ans" onkeydown="if(event.key==='Enter')submit('${lab.id}')"> <button class="b p" onclick="submit('${lab.id}')">Check</button>
+      <button class="b" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">Show solution</button><div hidden>${pre(lab.solution)}</div>
+      <p id="res"></p></div>
+    <div class="card takeaway"><h3>Best practice</h3>${lab.takeaway}</div>
+    ${lab.real ? `<div class="card real"><h3>Run it for real (your org)</h3>${pre(lab.real)}<p class="meta" style="margin:0">Requires org owner / billing manager. Org usage, AI-credit and budget endpoints accept fine-grained PATs or GitHub App tokens with <code>Administration: read</code>; check each endpoint’s auth section (enterprise endpoints can differ). Usage reports need the enhanced billing platform.</p></div>` : ''}
+    <div class="card"><h3>Official sources</h3><ul>${lab.src.map(([t, u]) => `<li><a href="${u}" target="_blank" rel="noopener">${t}</a></li>`).join('')}</ul></div>
+    <p>${i > 0 ? `<button class="b" onclick="go('${labs[i - 1].id}')">← Previous</button>` : ''} ${i < labs.length - 1 ? `<button class="b p" onclick="go('${labs[i + 1].id}')">Next →</button>` : ''}</p>`;
+}
+render();
+</script>
+</body>
+</html>
