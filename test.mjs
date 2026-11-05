@@ -1,6 +1,6 @@
 // Runs every lab's jq solution against the generated sample data and
-// verifies the in-browser answer checker accepts it. Usage: node test.mjs
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+// verifies the in-browser answer checker accepts it. Usage: node test.mjs [data]
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,8 +13,11 @@ vm.runInNewContext(core, ctx);
 const Core = ctx.module.exports;
 
 const data = Core.build();
-const dir = mkdtempSync(join(tmpdir(), 'finops-'));
+const gen = process.argv[2] === 'data'; // `node test.mjs data` writes the lab files to ./lab and stops
+const dir = gen ? 'lab' : mkdtempSync(join(tmpdir(), 'finops-'));
+mkdirSync(dir, { recursive: true });
 for (const [f, v] of Object.entries(data)) writeFileSync(join(dir, f), JSON.stringify(v, null, 2));
+if (gen) { console.log(`Lab files written to ./${dir}: ${Object.keys(data).join(', ')}`); process.exit(0); }
 
 let fail = 0;
 for (const lab of Core.labs) {
