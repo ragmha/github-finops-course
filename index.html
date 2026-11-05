@@ -284,7 +284,12 @@ function download(name) {
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([JSON.stringify(DATA[name], null, 2)], { type: 'application/json' })), download: name });
   a.click(); URL.revokeObjectURL(a.href);
 }
-function go(id) { const s = state(); s.cur = id; save(s); render(); scrollTo(0, 0); }
+const PAGES = 'https://ragmha.github.io/github-finops-course/';
+// Deep link: new Copilot app session on this repo that opens the lab in the browser canvas.
+const appLink = lab => 'https://github.com/copilot/app/launch?open=' + encodeURIComponent('ghapp://session/new?repo=ragmha%2Fgithub-finops-course&mode=interactive&prompt=' + encodeURIComponent(`Open the browser canvas at ${PAGES}#${lab.id} and coach me through the "${lab.title}" lab. Generate the lab files with \`node test.mjs data\`, then help me run each step in lab/ without revealing the answer unless I ask.`));
+function go(id) { const s = state(); s.cur = id; save(s); history.replaceState(null, '', '#' + id); render(); scrollTo(0, 0); }
+addEventListener('hashchange', () => go(location.hash.slice(1)));
+if (Core.labs.some(l => l.id === location.hash.slice(1))) { const s = state(); s.cur = location.hash.slice(1); save(s); }
 function submit(id) {
   const lab = Core.labs.find(l => l.id === id), v = document.getElementById('ans').value, out = document.getElementById('res');
   if (Core.check(lab, v, DATA)) { const s = state(); s.done[id] = true; save(s); render(); document.getElementById('res').innerHTML = '<span class="ok">✓ Correct — lab complete.</span>'; }
@@ -297,7 +302,7 @@ function render() {
   document.getElementById('toc').innerHTML = labs.map(l => `<button class="${l.id === lab.id ? 'on' : ''} ${s.done[l.id] ? 'done' : ''}" onclick="go('${l.id}')">${l.title}</button>`).join('') + `<p style="margin-top:10px">${n}/${labs.length} complete</p>`;
   const steps = lab.steps.map(st => typeof st === 'string' ? `<li>${st}</li>` : pre(st.cmd)).join('');
   document.getElementById('main').innerHTML = `
-    <h2>${lab.title}</h2><div class="meta">~${lab.mins} min ${s.done[lab.id] ? '· <span class="ok">completed</span>' : ''}</div>
+    <h2>${lab.title}</h2><div class="meta">~${lab.mins} min ${s.done[lab.id] ? '· <span class="ok">completed</span>' : ''} · <a href="${appLink(lab)}">Open in GitHub Copilot app</a></div>
     <div class="card"><h3>Why it matters</h3>${lab.why}</div>
     ${lab.id === 'setup' ? `<div class="card"><h3>Lab files</h3>${Object.keys(DATA).map(f => `<button class="b p" onclick="download('${f}')">⬇ ${f}</button> `).join('')}<p class="meta" style="margin:8px 0 0">Synthetic data for a fictional enterprise “acme”, September 2026. Prices are illustrative — always check GitHub Docs.</p></div>` : ''}
     <div class="card"><h3>Do it</h3><ol>${steps}</ol></div>
