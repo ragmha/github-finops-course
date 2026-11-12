@@ -1,6 +1,6 @@
 # GitHub FinOps — Hands-on Labs
 
-14 short labs that teach you how to read, allocate, forecast and cut GitHub spend (Actions, Codespaces, Packages, Copilot, Advanced Security). You use real `gh` and `jq` against a sample bill, then run the same steps on your own org.
+14 short labs that teach you how to read, allocate, forecast and cut GitHub spend (Actions, Codespaces, Packages, Copilot, Advanced Security). You use `gh` and `jq` against a sample bill, then adapt the exercises to your own data.
 
 **▶ Start the course: <https://ragmha.github.io/github-finops-course/>**
 
@@ -18,7 +18,22 @@
 
 - [`gh`](https://cli.github.com/) and [`jq`](https://jqlang.org/) for the labs.
 - Node 18+ for `test.mjs`.
-- Optional: org owner or billing manager access for the "Run it for real" steps.
+- Optional: appropriate organization or enterprise billing access for the "Run it for real" steps. API availability depends on the billing platform and account permissions.
+
+## Sample assumptions
+
+The fictional enterprise's September 2026 data is **not a historical bill or a price quote**. Rates and rules were checked against GitHub's published documentation on **2026-11-12**. Verify your account's current prices, entitlements, contract terms, and model availability before using these figures.
+
+- Runner rates are Linux $0.006/min, Windows $0.010/min, macOS $0.062/min, and Linux 16-core $0.042/min. The sample applies a single $300 Enterprise Cloud compute allowance to eligible private runner usage; real eligible usage can also include cloud sandbox compute and memory. Jobs round up to whole minutes. [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) · [Runner pricing](https://docs.github.com/en/billing/reference/actions-runner-pricing)
+- The sample has 85 distinct, full-month Copilot Business seats at $19 each, yielding 161,500 shared AI credits (85 × 1,900). Credit usage is synthetic and included in both `usage.json` and the model breakdown in `ai-usage.json`: **do not add the two totals**. AI credits are $0.01 each, but real consumption depends on tokens and model; extra usage depends on policy and budgets. [Copilot seats](https://docs.github.com/en/copilot/concepts/billing-and-usage/organizations-and-enterprises/seats-and-billing-cycles) · [AI model pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing) · [Budgets](https://docs.github.com/en/copilot/concepts/billing-and-usage/organizations-and-enterprises/budgets)
+- Copilot access is an optional, gradually rolling-out model for eligible enterprises: no incremental seat charge with an Enterprise Cloud license, or $10 per user per month for Copilot Standalone, with no included AI credits. As of the check date it was unavailable to self-service customers, GitHub Free/Team organizations, and self-service enterprise trials; an enterprise cannot mix it with Business/Enterprise. [Eligibility and plan comparison](https://docs.github.com/en/copilot/get-started/whats-changing-with-github-enterprise-and-copilot)
+- Storage rates use 720 hours for the 30-day sample month, and round each synthetic line to cents. The sample omits storage and transfer allowances, other discounts, tax, and invoice adjustments. `monthlyBudgetUSD` is a fictional aggregate finance target, not a GitHub budget field. [Actions storage](https://docs.github.com/en/billing/concepts/product-billing/github-actions) · [Codespaces pricing](https://docs.github.com/en/billing/concepts/product-billing/github-codespaces)
+
+## Using real billing data
+
+- The sample is enterprise-wide and uses normalized identifiers. An [organization `/usage` report](https://docs.github.com/en/rest/billing/usage) covers that organization. Enterprise [`/usage`](https://docs.github.com/en/enterprise-cloud@latest/rest/billing/usage) defaults to usage with **no** cost center; [`/usage/summary`](https://docs.github.com/en/enterprise-cloud@latest/rest/billing/usage) defaults to all cost centers but returns aggregated fields, not daily repository rows. Request [enterprise detailed report exports](https://docs.github.com/en/enterprise-cloud@latest/rest/billing/usage-reports) for recorded attribution.
+- Budget/query identifiers such as `actions_linux` are not necessarily response display labels such as `Actions Linux`. Inspect your report before filtering. The [SKU reference](https://docs.github.com/en/billing/reference/product-and-sku-names) lists `actions_linux_16_core`, while the [runner price table](https://docs.github.com/en/billing/reference/actions-runner-pricing) calls it `linux_16_core`. Check your account and API error details rather than assuming either label works everywhere.
+- GitHub's [reporting tutorial](https://docs.github.com/en/enterprise-cloud@latest/billing/tutorials/automate-usage-reporting) says usage endpoints require a classic personal access token, while the [organization endpoint reference](https://docs.github.com/en/rest/billing/usage) documents fine-grained tokens with Administration read. The [enterprise reference](https://docs.github.com/en/enterprise-cloud@latest/rest/billing/usage) also permits an enterprise-installed GitHub App with Enterprise billing read. These authentication paths have not been verified against a live billing account.
 
 ## Labs
 
@@ -41,5 +56,3 @@ node test.mjs data   # writes the sample lab files to ./lab (gitignored)
 
 - `index.html` is the whole course. The `<script id="core">` block holds the sample data generator, the labs and the answer checker. It has no DOM code, so `test.mjs` can load it in Node.
 - Pushes to `main` run `.github/workflows/pages.yml`. It runs `node test.mjs`, then deploys the repo root to GitHub Pages. Pull requests run the tests only.
-
-The sample data is synthetic, for a fictional enterprise called "acme". Prices are illustrative, so always check [GitHub Docs](https://docs.github.com/billing) for current rates.
